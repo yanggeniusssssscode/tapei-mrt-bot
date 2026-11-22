@@ -9,6 +9,7 @@ import os
 import re
 import datetime
 import logging
+import sqlite3
 from typing import Dict, Any, Optional, Tuple
 from flask import Flask, request, abort, jsonify
 from dotenv import load_dotenv
@@ -70,8 +71,132 @@ if not CHANNEL_SECRET or not CHANNEL_ACCESS_TOKEN:
 configuration = Configuration(access_token=CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
 
-# 記憶體內暫存使用者對話狀態 {user_id: {"from": str, "to": str, "time": str}}
-user_sessions: Dict[str, Dict[str, Optional[str]]] = {}
+# ==========================================
+# SQLite 使用者狀態持久化管理 (解決多進程/重啟狀態遺失)
+# ==========================================
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_sessions.db")
+
+def init_db():
+    """初始化 SQLite 資料庫與 table"""
+    try:
+        with sqlite3.connect(DB_PATH, timeout=10.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    user_id TEXT PRIMARY KEY,
+                    origin TEXT,
+                    destination TEXT,
+                    time_str TEXT,
+                    updated_at TEXT
+                );
+            """)
+            conn.commit()
+    except Exception as e:
+        logger.error(f"初始化 SQLite 資料庫失敗: {e}", exc_info=True)
+
+# 啟動時自動初始化資料庫
+init_db()
+
+def get_user_session(user_id: str) -> Dict[str, Optional[str]]:
+    """從 SQLite 讀取使用者的查詢狀態"""
+    try:
+        with sqlite3.connect(DB_PATH, timeout=10.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT origin, destination, time_str FROM user_sessions WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                return {"from": row[0], "to": row[1], "time": row[2]}
+    except Exception as e:
+        logger.error(f"讀取 SQLite session 失敗 (user_id={user_id}): {e}")
+    return {"from": None, "to": None, "time": None}
+
+def save_user_session(user_id: str, data: Dict[str, Optional[str]]):
+    """將使用者的查詢狀態持久化寫入 SQLite"""
+    try:
+        now_str = datetime.datetime.now(TAIPEI_TZ).isoformat()
+        with sqlite3.connect(DB_PATH, timeout=10.0) as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO user_sessions (user_id, origin, destination, time_str, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, data.get("from"), data.get("to"), data.get("time"), now_str))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"寫入 SQLite session 失敗 (user_id={user_id}): {e}")
+
+def clear_user_session(user_id: str):
+    """清除使用者的查詢狀態"""
+    try:
+        with sqlite3.connect(DB_PATH, timeout=10.0) as conn:
+            conn.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"清除 SQLite session 失敗 (user_id={user_id}): {e}")
+
+class UserSession:
+    """使用者 Session 代理物件，修改屬性時自動同步寫入 SQLite"""
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self._data = get_user_session(user_id)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._data.get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data.get(key)
+
+    def __setitem__(self, key: str, value: Any):
+        self._data[key] = value
+        save_user_session(self.user_id, self._data)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._data
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __repr__(self) -> str:
+        return f"UserSession({self.user_id}: {self._data})"
+
+    def items(self):
+        return self._data.items()
+
+    def keys(self):
+        return self._data.keys()
+
+    def values(self):
+        return self._data.values()
+
+    def update(self, **kwargs):
+        for k, v in kwargs.items():
+            self._data[k] = v
+        save_user_session(self.user_id, self._data)
+
+    def clear(self):
+        self._data = {"from": None, "to": None, "time": None}
+        clear_user_session(self.user_id)
+
+class SessionStore:
+    """全域 Session 存取介面，相容於字典操作並底層對接 SQLite"""
+    def __getitem__(self, user_id: str) -> UserSession:
+        return UserSession(user_id)
+
+    def __setitem__(self, user_id: str, value: Dict[str, Optional[str]]):
+        save_user_session(user_id, value)
+
+    def __contains__(self, user_id: str) -> bool:
+        try:
+            with sqlite3.connect(DB_PATH, timeout=10.0) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM user_sessions WHERE user_id = ?", (user_id,))
+                return cursor.fetchone() is not None
+        except Exception:
+            return False
+
+user_sessions = SessionStore()
+
 
 
 # ==========================================
