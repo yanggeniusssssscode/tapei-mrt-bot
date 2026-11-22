@@ -16,21 +16,25 @@ from linebot.v3.messaging import (
 )
 
 # ==========================================
-# 全線分段配置表（確保每段車站數 <= 12，全站皆可點選）
+# 全線車站 Carousel 配置表（依照營運順序排列，每張卡片 8～10 站）
 # ==========================================
-LINE_SECTIONS_CONFIG = {
+LINE_CAROUSEL_CONFIG = {
     "BL": {
         "name": "板南線",
         "emoji": "🟦",
         "color": "#0070BD",
-        "sections": [
+        "cards": [
             {
-                "label": "頂埔 ～ 台北車站",
-                "stations": ["頂埔", "永寧", "土城", "海山", "亞東醫院", "府中", "板橋", "新埔", "江子翠", "龍山寺", "西門", "台北車站"]
+                "subtitle": "頂埔 ➔ 新埔（第 1/3 頁）",
+                "stations": ["頂埔", "永寧", "土城", "海山", "亞東醫院", "府中", "板橋", "新埔"]
             },
             {
-                "label": "善導寺 ～ 南港展覽館",
-                "stations": ["善導寺", "忠孝新生", "忠孝復興", "忠孝敦化", "國父紀念館", "市政府", "永春", "後山埤", "昆陽", "南港", "南港展覽館"]
+                "subtitle": "江子翠 ➔ 忠孝敦化（第 2/3 頁）",
+                "stations": ["江子翠", "龍山寺", "西門", "台北車站", "善導寺", "忠孝新生", "忠孝復興", "忠孝敦化"]
+            },
+            {
+                "subtitle": "國父紀念館 ➔ 南港展覽館（第 3/3 頁）",
+                "stations": ["國父紀念館", "市政府", "永春", "後山埤", "昆陽", "南港", "南港展覽館"]
             }
         ]
     },
@@ -38,18 +42,18 @@ LINE_SECTIONS_CONFIG = {
         "name": "淡水信義線",
         "emoji": "🟥",
         "color": "#E3002C",
-        "sections": [
+        "cards": [
             {
-                "label": "廣慈 ～ 台北車站",
+                "subtitle": "廣慈/奉天宮 ➔ 台北車站（第 1/3 頁）",
                 "stations": ["廣慈/奉天宮", "象山", "台北101/世貿", "信義安和", "大安", "大安森林公園", "東門", "中正紀念堂", "台大醫院", "台北車站"]
             },
             {
-                "label": "中山 ～ 石牌",
-                "stations": ["中山", "雙連", "民權西路", "圓山", "劍潭", "士林", "芝山", "明德", "石牌"]
+                "subtitle": "中山 ➔ 唭哩岸（第 2/3 頁）",
+                "stations": ["中山", "雙連", "民權西路", "圓山", "劍潭", "士林", "芝山", "明德", "石牌", "唭哩岸"]
             },
             {
-                "label": "唭哩岸 ～ 淡水/新北投",
-                "stations": ["唭哩岸", "奇岩", "北投", "新北投", "復興崗", "忠義", "關渡", "竹圍", "紅樹林", "淡水"]
+                "subtitle": "奇岩 ➔ 淡水／新北投（第 3/3 頁）",
+                "stations": ["奇岩", "北投", "新北投", "復興崗", "忠義", "關渡", "竹圍", "紅樹林", "淡水"]
             }
         ]
     },
@@ -57,18 +61,18 @@ LINE_SECTIONS_CONFIG = {
         "name": "中和新蘆線",
         "emoji": "🟧",
         "color": "#F89E1B",
-        "sections": [
+        "cards": [
             {
-                "label": "迴龍段～民權西路",
-                "stations": ["迴龍", "丹鳳", "輔大", "新莊", "頭前庄", "先嗇宮", "三重", "菜寮", "台北橋", "大橋頭"]
+                "subtitle": "迴龍支線・迴龍 ➔ 台北橋（第 1/3 頁）",
+                "stations": ["迴龍", "丹鳳", "輔大", "新莊", "頭前庄", "先嗇宮", "三重", "菜寮", "台北橋"]
             },
             {
-                "label": "蘆洲段～民權西路",
-                "stations": ["蘆洲", "三民高中", "徐匯中學", "三和國中", "三重國小", "大橋頭", "民權西路"]
+                "subtitle": "蘆洲支線＋市區・蘆洲 ➔ 行天宮（第 2/3 頁）",
+                "stations": ["蘆洲", "三民高中", "徐匯中學", "三和國中", "三重國小", "大橋頭", "民權西路", "中山國小", "行天宮"]
             },
             {
-                "label": "中山國小～南勢角",
-                "stations": ["中山國小", "行天宮", "松江南京", "忠孝新生", "東門", "古亭", "頂溪", "永安市場", "景安", "南勢角"]
+                "subtitle": "市區南端段・松江南京 ➔ 南勢角（第 3/3 頁）",
+                "stations": ["松江南京", "忠孝新生", "東門", "古亭", "頂溪", "永安市場", "景安", "南勢角"]
             }
         ]
     },
@@ -76,14 +80,14 @@ LINE_SECTIONS_CONFIG = {
         "name": "松山新店線",
         "emoji": "🟩",
         "color": "#008659",
-        "sections": [
+        "cards": [
             {
-                "label": "新店 ～ 古亭/小碧潭",
-                "stations": ["新店", "新店區公所", "七張", "小碧潭", "大坪林", "景美", "萬隆", "公館", "台電大樓", "古亭"]
+                "subtitle": "松山 ➔ 中正紀念堂（第 1/2 頁）",
+                "stations": ["松山", "南京三民", "台北小巨蛋", "南京復興", "松江南京", "中山", "北門", "西門", "小南門", "中正紀念堂"]
             },
             {
-                "label": "中正紀念堂 ～ 松山",
-                "stations": ["中正紀念堂", "小南門", "西門", "北門", "中山", "松江南京", "南京復興", "台北小巨蛋", "南京三民", "松山"]
+                "subtitle": "古亭 ➔ 新店／小碧潭（第 2/2 頁）",
+                "stations": ["古亭", "台電大樓", "公館", "萬隆", "景美", "大坪林", "七張", "小碧潭", "新店區公所", "新店"]
             }
         ]
     },
@@ -91,37 +95,40 @@ LINE_SECTIONS_CONFIG = {
         "name": "文湖線",
         "emoji": "🟫",
         "color": "#C48C31",
-        "sections": [
+        "cards": [
             {
-                "label": "動物園 ～ 忠孝復興",
-                "stations": ["動物園", "木柵", "萬芳社區", "萬芳醫院", "辛亥", "麟光", "六張犁", "科技大樓", "大安", "忠孝復興"]
+                "subtitle": "南港展覽館 ➔ 港墘（第 1/3 頁）",
+                "stations": ["南港展覽館", "南港軟體園區", "東湖", "葫洲", "大湖公園", "內湖", "文德", "港墘"]
             },
             {
-                "label": "南京復興 ～ 港墘",
-                "stations": ["南京復興", "中山國中", "松山機場", "大直", "劍南路", "西湖", "港墘"]
+                "subtitle": "西湖 ➔ 大安（第 2/3 頁）",
+                "stations": ["西湖", "劍南路", "大直", "松山機場", "中山國中", "南京復興", "忠孝復興", "大安"]
             },
             {
-                "label": "文德 ～ 南港展覽館",
-                "stations": ["文德", "內湖", "大湖公園", "葫洲", "東湖", "南港軟體園區", "南港展覽館"]
+                "subtitle": "科技大樓 ➔ 動物園（第 3/3 頁）",
+                "stations": ["科技大樓", "六張犁", "麟光", "辛亥", "萬芳醫院", "萬芳社區", "木柵", "動物園"]
             }
         ]
     },
     "Y": {
         "name": "環狀線",
         "emoji": "🟨",
-        "color": "#FEDB00",
-        "sections": [
+        "color": "#EAB308",
+        "cards": [
             {
-                "label": "大坪林 ～ 中和",
-                "stations": ["大坪林", "十四張", "秀朗橋", "景平", "景安", "中和"]
+                "subtitle": "新北產業園區 ➔ 中原（第 1/2 頁）",
+                "stations": ["新北產業園區", "幸福", "頭前庄", "新埔民生", "板橋", "板新", "中原"]
             },
             {
-                "label": "橋和 ～ 新北產業園區",
-                "stations": ["橋和", "中原", "板新", "板橋", "新埔民生", "頭前庄", "幸福", "新北產業園區"]
+                "subtitle": "橋和 ➔ 大坪林（第 2/2 頁）",
+                "stations": ["橋和", "中和", "景安", "景平", "秀朗橋", "十四張", "大坪林"]
             }
         ]
     }
 }
+
+# 保持相容性別名
+LINE_SECTIONS_CONFIG = LINE_CAROUSEL_CONFIG
 
 
 def create_transfer_result_flex(plan: Dict[str, Any]) -> Dict[str, Any]:
@@ -499,10 +506,10 @@ def create_main_quick_reply() -> QuickReply:
 def create_line_selection_quick_reply(target_type: str = "from") -> QuickReply:
     """
     選擇路線選單（涵蓋板南、淡水信義、中和新蘆、松山新店、文湖與環狀線）
-    target_type: 'from' (出發站) 或 'to' (目的地)
+    點選後直接回傳該路線所有車站之水平輪播卡片 (Carousel)
     """
     items = []
-    for line_code, cfg in LINE_SECTIONS_CONFIG.items():
+    for line_code, cfg in LINE_CAROUSEL_CONFIG.items():
         items.append(
             QuickReplyItem(
                 action=MessageAction(
@@ -511,69 +518,100 @@ def create_line_selection_quick_reply(target_type: str = "from") -> QuickReply:
                 )
             )
         )
-    items.append(
-        QuickReplyItem(
-            action=MessageAction(label="🔄 重新查詢", text="重新查詢")
-        )
-    )
     return QuickReply(items=items)
+
+
+def create_line_station_carousel_flex(line_code: str, target_type: str = "from") -> Dict[str, Any]:
+    """
+    直接回傳全線車站水平輪播卡片（Flex Message Carousel）
+    徹底移除「選擇區段」步驟，依照營運順序排列，每張卡片容納 8～10 個站名按鈕，點擊直接送出「選站:{target_type}:{st}」
+    特別注意：中和新蘆線完整包含迴龍支線、蘆洲支線與南勢角主線所有車站，左右滑動即可點選全線任何一站。
+    """
+    line_code = line_code.upper()
+    cfg = LINE_CAROUSEL_CONFIG.get(line_code) or LINE_CAROUSEL_CONFIG["BL"]
+    line_name = cfg["name"]
+    line_emoji = cfg["emoji"]
+    line_color = cfg["color"]
+    type_name = "出發站" if target_type == "from" else "目的地"
+    text_color = "#1E293B" if line_code == "Y" else "#FFFFFF"
+    sub_color = "#713F12" if line_code == "Y" else "#F1F5F9"
+
+    bubbles = []
+    for c_idx, card in enumerate(cfg["cards"]):
+        station_buttons = []
+        for st in card["stations"]:
+            station_buttons.append({
+                "type": "button",
+                "style": "secondary",
+                "color": "#F8FAFC",
+                "height": "sm",
+                "action": {
+                    "type": "message",
+                    "label": st,
+                    "text": f"選站:{target_type}:{st}"
+                }
+            })
+
+        bubble = {
+            "type": "bubble",
+            "size": "kilo",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": line_color,
+                "paddingAll": "md",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": f"{line_emoji} {line_name}・選擇{type_name}",
+                        "color": text_color,
+                        "weight": "bold",
+                        "size": "sm"
+                    },
+                    {
+                        "type": "text",
+                        "text": f"📍 {card['subtitle']}",
+                        "color": sub_color,
+                        "size": "xxs",
+                        "margin": "xs"
+                    }
+                ]
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "sm",
+                "spacing": "xs",
+                "contents": station_buttons
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "paddingAll": "xs",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": "👈 左右滑動切換車站 👉",
+                        "size": "xxs",
+                        "color": "#94A3B8",
+                        "align": "center"
+                    }
+                ]
+            }
+        }
+        bubbles.append(bubble)
+
+    return {
+        "type": "carousel",
+        "contents": bubbles
+    }
 
 
 def create_section_selection_quick_reply(line_code: str, target_type: str = "from") -> QuickReply:
-    """
-    若路線超過 12 站，先分前後區段按鈕展開
-    """
-    cfg = LINE_SECTIONS_CONFIG.get(line_code)
-    if not cfg:
-        return create_line_selection_quick_reply(target_type)
-
-    sections = cfg["sections"]
-    items = []
-    for idx, sec in enumerate(sections):
-        items.append(
-            QuickReplyItem(
-                action=MessageAction(
-                    label=f"📍 {sec['label']}",
-                    text=f"選區段:{target_type}:{line_code}:{idx}"
-                )
-            )
-        )
-    items.append(
-        QuickReplyItem(
-            action=MessageAction(label="↩ 返回換線", text="選擇出發站" if target_type == "from" else "選擇目的地")
-        )
-    )
-    return QuickReply(items=items)
+    """相容備用"""
+    return create_line_selection_quick_reply(target_type)
 
 
 def create_station_selection_quick_reply(line_code: str, section_idx: int, target_type: str = "from") -> QuickReply:
-    """
-    點選區段後，展開該區段【所有車站】供純點選，不漏任何一站
-    """
-    cfg = LINE_SECTIONS_CONFIG.get(line_code)
-    if not cfg:
-        return create_line_selection_quick_reply(target_type)
-
-    sections = cfg["sections"]
-    if section_idx >= len(sections):
-        section_idx = 0
-
-    sec = sections[section_idx]
-    stations = sec["stations"]
-
-    items = []
-    for st in stations:
-        items.append(
-            QuickReplyItem(
-                action=MessageAction(
-                    label=f"{st}",
-                    text=f"選站:{target_type}:{st}"
-                )
-            )
-        )
-    items.append(
-        QuickReplyItem(
-            action=MessageAction(label="↩ 返回區段", text=f"選線:{target_type}:{line_code}")
-        )
-    )
-    return QuickReply(items=items)
+    """相容備用"""
+    return create_line_selection_quick_reply(target_type)

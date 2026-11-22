@@ -37,9 +37,8 @@ from flex_templates import (
     create_transfer_result_flex,
     create_help_card_flex,
     create_line_selection_quick_reply,
-    create_section_selection_quick_reply,
-    create_station_selection_quick_reply,
-    LINE_SECTIONS_CONFIG
+    create_line_station_carousel_flex,
+    LINE_CAROUSEL_CONFIG
 )
 
 # 載入環境變數
@@ -327,41 +326,22 @@ def handle_text_message(event: MessageEvent):
         return
 
     # --------------------------------------------------
-    # 4. Quick Reply 路線點選展開區段（確保每站皆可選）
+    # 4. 點選路線直接回傳「該路線所有車站」水平輪播卡片 (Carousel)
+    # 徹底移除「選擇區段」中間步驟，左右滑動直選車站
     # --------------------------------------------------
-    if user_msg.startswith("選線:") or user_msg.startswith("選路線:"):
+    if user_msg.startswith("選線:") or user_msg.startswith("選路線:") or user_msg.startswith("選區段:"):
         parts = user_msg.split(":")
         if len(parts) >= 3:
             target_type = parts[1]  # 'from' 或 'to'
-            line_code = parts[2]    # 'BL', 'R', 'O', etc.
-            line_cfg = LINE_SECTIONS_CONFIG.get(line_code, {})
+            line_code = parts[2].upper()  # 'BL', 'R', 'O', etc.
+            line_cfg = LINE_CAROUSEL_CONFIG.get(line_code, {})
             line_name = line_cfg.get("name", line_code)
             type_name = "出發站" if target_type == "from" else "目的地"
 
-            reply_msg = TextMessage(
-                text=f"📍 請選擇【{line_name}】{type_name}所在的區段：",
-                quick_reply=create_section_selection_quick_reply(line_code, target_type)
-            )
-            reply_single_message(reply_token, reply_msg)
-            return
-
-    # --------------------------------------------------
-    # 5. Quick Reply 區段點選展開【該區段所有車站】
-    # --------------------------------------------------
-    if user_msg.startswith("選區段:"):
-        parts = user_msg.split(":")
-        if len(parts) >= 4:
-            target_type = parts[1]
-            line_code = parts[2]
-            sec_idx = int(parts[3])
-            line_cfg = LINE_SECTIONS_CONFIG.get(line_code, {})
-            sec_list = line_cfg.get("sections", [])
-            sec_label = sec_list[sec_idx]["label"] if sec_idx < len(sec_list) else ""
-            type_name = "出發車站" if target_type == "from" else "目的地車站"
-
-            reply_msg = TextMessage(
-                text=f"📍 請點選【{sec_label}】的{type_name}：",
-                quick_reply=create_station_selection_quick_reply(line_code, sec_idx, target_type)
+            carousel_bubble = create_line_station_carousel_flex(line_code, target_type)
+            reply_msg = FlexMessage(
+                alt_text=f"📍 請選擇【{line_name}】{type_name}（向右滑動切換車站）",
+                contents=FlexContainer.from_dict(carousel_bubble)
             )
             reply_single_message(reply_token, reply_msg)
             return
@@ -386,7 +366,7 @@ def handle_text_message(event: MessageEvent):
                     return
                 else:
                     reply_msg = TextMessage(
-                        text=f"✅ 已設定出發站：【{norm_st}】\n請點擊下方按鈕選擇「目的地」所在路線：",
+                        text=f"✅ 已設定出發站：【{norm_st}】\n請點選下方路線選擇「目的地」（左右滑動直選車站）：",
                         quick_reply=create_line_selection_quick_reply("to")
                     )
                     reply_single_message(reply_token, reply_msg)
@@ -399,7 +379,7 @@ def handle_text_message(event: MessageEvent):
                     return
                 else:
                     reply_msg = TextMessage(
-                        text=f"✅ 已設定目的地：【{norm_st}】\n請點擊下方按鈕選擇「出發站」所在路線：",
+                        text=f"✅ 已設定目的地：【{norm_st}】\n請點選下方路線選擇「出發站」（左右滑動直選車站）：",
                         quick_reply=create_line_selection_quick_reply("from")
                     )
                     reply_single_message(reply_token, reply_msg)
