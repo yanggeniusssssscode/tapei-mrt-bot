@@ -32,7 +32,14 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, PostbackEvent
 
 # 核心轉乘推算引擎與 Flex 模板
-from mrt_engine import ScheduleOptimizer, metro_graph, LINE_NAMES, is_taiwan_holiday_or_weekend
+from mrt_engine import (
+    ScheduleOptimizer,
+    metro_graph,
+    LINE_NAMES,
+    is_taiwan_holiday_or_weekend,
+    TAIPEI_TZ,
+    get_now_taipei
+)
 from flex_templates import (
     create_transfer_result_flex,
     create_help_card_flex,
@@ -111,7 +118,7 @@ def extract_datetime_and_clean_text(text: str) -> Tuple[Optional[str], str]:
       - 「09:00 迴龍 到 士林」-> ("09:00", "迴龍 到 士林")
       - 「2026-11-23 08:30 迴龍到士林」-> ("2026-11-23T08:30", "迴龍到士林")
     """
-    now = datetime.datetime.now()
+    now = get_now_taipei()
     clean_text = text.strip()
     target_date = None
 
@@ -224,7 +231,7 @@ def keep_alive():
     return jsonify({
         "status": "alive",
         "service": "Taipei Metro Transfer Optimization Bot",
-        "timestamp": datetime.datetime.now().isoformat()
+        "timestamp": get_now_taipei().isoformat()
     }), 200
 
 
@@ -423,6 +430,8 @@ def handle_text_message(event: MessageEvent):
         if "T" in standalone_dt:
             try:
                 dt_obj = datetime.datetime.fromisoformat(standalone_dt)
+                if dt_obj.tzinfo is None:
+                    dt_obj = dt_obj.replace(tzinfo=TAIPEI_TZ)
                 wk_name = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][dt_obj.weekday()]
                 is_h, h_desc = is_taiwan_holiday_or_weekend(dt_obj)
                 day_kind = h_desc if is_h else "平日"
@@ -557,6 +566,8 @@ def handle_postback(event: PostbackEvent):
             if "T" in chosen_time:
                 try:
                     dt = datetime.datetime.fromisoformat(chosen_time)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=TAIPEI_TZ)
                     wk_name = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][dt.weekday()]
                     is_h, h_desc = is_taiwan_holiday_or_weekend(dt)
                     day_kind = h_desc if is_h else "平日"

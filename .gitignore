@@ -1,0 +1,26 @@
+# 環境變數與機密資訊
+.env
+.env.local
+
+# Python 快取與暫存檔
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 虛擬環境
+.venv/
+venv/
+ENV/
+env/
+
+# IDE 與編輯器設定
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 測試與覆蓋率報告
+.pytest_cache/
+.coverage
+htmlcov/

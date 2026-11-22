@@ -268,7 +268,7 @@ for st_name, data in stations_db.items():
     data["weekend"].sort(key=lambda x: op_min(x["time"]))
 
 output_data = {
-    "generated_at": datetime.datetime.now().isoformat(),
+    "generated_at": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8), name="Asia/Taipei")).isoformat(),
     "station_count": len(stations_db),
     "total_trains": len(trains_db),
     "stations": stations_db,

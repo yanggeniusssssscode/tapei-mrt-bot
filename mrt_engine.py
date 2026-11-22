@@ -16,6 +16,15 @@ import holidays
 
 logger = logging.getLogger(__name__)
 
+# 台灣時區常數 (Asia/Taipei, UTC+8)
+TAIPEI_TZ = datetime.timezone(datetime.timedelta(hours=8), name="Asia/Taipei")
+
+
+def get_now_taipei() -> datetime.datetime:
+    """取得台灣時區 (Asia/Taipei, UTC+8) 的當下 datetime 物件（不受雲端主機預設時區影響）"""
+    return datetime.datetime.now(TAIPEI_TZ)
+
+
 # 台灣國定假日識別（包含春節、清明、端午、中秋、國慶、元旦等）
 TW_HOLIDAYS = holidays.Taiwan()
 
@@ -487,7 +496,7 @@ class ScheduleOptimizer:
         2. 依序查表匹配真實班表
         3. 跨月台正對面同面轉乘步行緩衝 0 分鐘，其餘依實際基準步行時間推算
         """
-        now = datetime.datetime.now()
+        now = get_now_taipei()
         if dep_time_str:
             try:
                 clean_time = dep_time_str.replace("：", ":").strip()
@@ -500,6 +509,10 @@ class ScheduleOptimizer:
                     start_h = int(parts[0])
                     start_m = int(parts[1])
                     target_dt = now.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
+
+                # 確保皆具備台灣時區資訊 (UTC+8)
+                if target_dt.tzinfo is None:
+                    target_dt = target_dt.replace(tzinfo=TAIPEI_TZ)
             except Exception:
                 target_dt = now
         else:
