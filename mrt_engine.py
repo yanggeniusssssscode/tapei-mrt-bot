@@ -1,0 +1,603 @@
+"""
+Taipei Metro Transfer Optimization Engine (北捷轉乘時間優化核心引擎)
+- 100% 讀取真實時刻表資料庫 trtc_timetable.json（零數學公式估算、零假班表備援）
+- 通用圖論最短路徑演算法（Dijkstra），支援全北捷任意多次轉乘（直達、轉 1 次、轉 2 次、轉 3 次全部通用）
+- 跨月台正對面同面轉乘（大橋頭、西門、中正紀念堂、古亭、東門）步行緩衝嚴格設為 0 分鐘（抵達即可直接銜接對面發車班次）
+- 支援北捷全線：文湖線、淡水信義線＋新北投支線、松山新店線＋小碧潭支線、中和新蘆迴龍線＋蘆洲線、板南線、環狀線
+"""
+
+import os
+import json
+import heapq
+import datetime
+import logging
+from typing import Dict, List, Optional, Tuple, Any
+import holidays
+
+logger = logging.getLogger(__name__)
+
+# 台灣國定假日識別（包含春節、清明、端午、中秋、國慶、元旦等）
+TW_HOLIDAYS = holidays.Taiwan()
+
+
+def is_taiwan_holiday_or_weekend(dt: datetime.datetime) -> Tuple[bool, Optional[str]]:
+    """
+    判斷指定日期是否應套用北捷「假日時刻表」：
+    1. 屬於 holidays.Taiwan() 之台灣國定假日（如中秋、端午、國慶、春節等）
+    2. 週六或週日
+    回傳：(是否適用假日班表, 假日或週末說明)
+    """
+    d = dt.date()
+    if d in TW_HOLIDAYS:
+        h_name = TW_HOLIDAYS.get(d)
+        return True, f"國定假日（{h_name}）"
+    if dt.weekday() >= 5:
+        wk_name = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][dt.weekday()]
+        return True, f"週末（{wk_name}）"
+    return False, None
+
+# ==========================================
+# 1. 強制載入真實時刻表資料庫 trtc_timetable.json
+# ==========================================
+TIMETABLE_FILE = os.path.join(os.path.dirname(__file__), "trtc_timetable.json")
+if not os.path.exists(TIMETABLE_FILE):
+    raise RuntimeError(f"FATAL: {TIMETABLE_FILE} 不存在！系統嚴禁估算，必須具備真實時刻表資料庫。")
+
+try:
+    with open(TIMETABLE_FILE, "r", encoding="utf-8") as _f:
+        _TIMETABLE_DATA = json.load(_f)
+    STATIONS_DB = _TIMETABLE_DATA.get("stations", {})
+    TRAINS_DB = _TIMETABLE_DATA.get("trains", {})
+    logger.info(f"✅ 成功載入真實時刻表資料庫：{len(STATIONS_DB)} 車站，{len(TRAINS_DB)} 班次")
+except Exception as _e:
+    raise RuntimeError(f"FATAL: 讀取真實時刻表資料庫失敗: {_e}")
+
+
+def op_min(t_str: str) -> int:
+    """營運分鐘數轉換（04:00~23:59 為當日，00:00~03:59 視為跨夜營運，確保全日單調遞增）"""
+    h, m = map(int, t_str.split(":")[:2])
+    return (h if h >= 4 else h + 24) * 60 + m
+
+
+def min_to_str(m_val: int) -> str:
+    """營運分鐘數轉換為標準 HH:MM 格式"""
+    h = (m_val // 60) % 24
+    m = m_val % 60
+    return f"{h:02d}:{m:02d}"
+
+
+# ==========================================
+# 2. 北捷路網交路、色彩與站點定義
+# ==========================================
+
+LINE_COLORS = {
+    "BL": "#0070BD",        # 板南線
+    "R": "#E3002C",         # 淡水信義線
+    "R_BRANCH": "#E3002C",  # 新北投支線
+    "G": "#008659",         # 松山新店線
+    "G_BRANCH": "#008659",  # 小碧潭支線
+    "O_HUILONG": "#F89E1B", # 中和新蘆線（迴龍線）
+    "O_LUZHOU": "#F89E1B",  # 中和新蘆線（蘆洲線）
+    "BR": "#C48C31",        # 文湖線
+    "Y": "#FEDB00",         # 環狀線
+}
+
+LINE_NAMES = {
+    "BL": "板南線",
+    "R": "淡水信義線",
+    "R_BRANCH": "新北投支線",
+    "G": "松山新店線",
+    "G_BRANCH": "小碧潭支線",
+    "O_HUILONG": "中和新蘆線",
+    "O_LUZHOU": "中和新蘆線",
+    "BR": "文湖線",
+    "Y": "環狀線",
+}
+
+LINE_STATIONS = {
+    "BL": [
+        "頂埔", "永寧", "土城", "海山", "亞東醫院", "府中", "板橋", "新埔",
+        "江子翠", "龍山寺", "西門", "台北車站", "善導寺", "忠孝新生", "忠孝復興",
+        "忠孝敦化", "國父紀念館", "市政府", "永春", "後山埤", "昆陽", "南港", "南港展覽館"
+    ],
+    "R": [
+        "廣慈/奉天宮", "象山", "台北101/世貿", "信義安和", "大安", "大安森林公園", "東門",
+        "中正紀念堂", "台大醫院", "台北車站", "中山", "雙連", "民權西路",
+        "圓山", "劍潭", "士林", "芝山", "明德", "石牌", "唭哩岸", "奇岩",
+        "北投", "復興崗", "忠義", "關渡", "竹圍", "紅樹林", "淡水"
+    ],
+    "R_BRANCH": [
+        "北投", "新北投"
+    ],
+    "G": [
+        "新店", "新店區公所", "七張", "大坪林", "景美", "萬隆", "公館",
+        "台電大樓", "古亭", "中正紀念堂", "小南門", "西門", "北門", "中山",
+        "松江南京", "南京復興", "台北小巨蛋", "南京三民", "松山"
+    ],
+    "G_BRANCH": [
+        "七張", "小碧潭"
+    ],
+    "O_HUILONG": [
+        "迴龍", "丹鳳", "輔大", "新莊", "頭前庄", "先嗇宮", "三重", "菜寮", "台北橋",
+        "大橋頭", "民權西路", "中山國小", "行天宮", "松江南京", "忠孝新生",
+        "東門", "古亭", "頂溪", "永安市場", "景安", "南勢角"
+    ],
+    "O_LUZHOU": [
+        "蘆洲", "三民高中", "徐匯中學", "三和國中", "三重國小",
+        "大橋頭", "民權西路", "中山國小", "行天宮", "松江南京", "忠孝新生",
+        "東門", "古亭", "頂溪", "永安市場", "景安", "南勢角"
+    ],
+    "BR": [
+        "動物園", "木柵", "萬芳社區", "萬芳醫院", "辛亥", "麟光", "六張犁",
+        "科技大樓", "大安", "忠孝復興", "南京復興", "中山國中", "松山機場",
+        "大直", "劍南路", "西湖", "港墘", "文德", "內湖", "大湖公園",
+        "葫洲", "東湖", "南港軟體園區", "南港展覽館"
+    ],
+    "Y": [
+        "大坪林", "十四張", "秀朗橋", "景平", "景安", "中和", "橋和",
+        "中原", "板新", "板橋", "新埔民生", "頭前庄", "幸福", "新北產業園區"
+    ]
+}
+
+# 轉乘站基準步行時間表（跨月台正對面同面轉乘嚴格設為 0.0 分鐘）
+INTERCHANGE_WALK_DATA = {
+    # 跨月台正對面同面轉乘：0 分鐘直接銜接
+    "大橋頭": {
+        "base_min": 0.0,
+        "tip": "同月台正對面轉乘往蘆洲或迴龍列車（0 分鐘直接銜接）"
+    },
+    "西門": {
+        "base_min": 0.0,
+        "tip": "同層跨月台平行轉乘（藍線與綠線對面月台 0 分鐘銜接）"
+    },
+    "中正紀念堂": {
+        "base_min": 0.0,
+        "tip": "同層跨月台平行轉乘（紅線與綠線對面月台 0 分鐘銜接）"
+    },
+    "古亭": {
+        "base_min": 0.0,
+        "tip": "同層跨月台平行轉乘（橘線與綠線對面月台 0 分鐘銜接）"
+    },
+    "東門": {
+        "base_min": 0.0,
+        "tip": "同層跨月台平行轉乘（紅線與橘線對面月台 0 分鐘銜接）"
+    },
+
+    # 專用支線月台轉乘
+    "北投": {
+        "base_min": 2.0,
+        "tip": "北投站轉乘新北投支線專用月台（步行約 2 分鐘）"
+    },
+    "七張": {
+        "base_min": 2.0,
+        "tip": "七張站轉乘小碧潭支線專用月台（步行約 2 分鐘）"
+    },
+
+    # 重點轉乘樞紐
+    "台北車站": {
+        "base_min": 4.0,
+        "tip": "板南線第 3/8 門近轉乘穿堂，請依地貼指標前往淡水信義線"
+    },
+    "忠孝復興": {
+        "base_min": 4.0,
+        "tip": "板南線往文湖線建議搭第 4 車廂（近超長電扶梯）"
+    },
+    "南京復興": {
+        "base_min": 4.0,
+        "tip": "綠線建議第 4 車廂（直達文湖線高架專用扶梯）"
+    },
+    "大安": {
+        "base_min": 3.0,
+        "tip": "紅線建議第 3 車廂（近文湖線高架轉乘梯）"
+    },
+    "民權西路": {
+        "base_min": 3.0,
+        "tip": "往淡水信義線建議第 5 車廂，往中和新蘆線建議第 3 車廂"
+    },
+    "忠孝新生": {
+        "base_min": 3.0,
+        "tip": "板南線第 3 車廂中央電扶梯直達橘線月台"
+    },
+    "松江南京": {
+        "base_min": 3.0,
+        "tip": "綠線建議第 3 車廂（轉乘橘線依方向分流扶梯）"
+    },
+    "中山": {
+        "base_min": 2.5,
+        "tip": "紅線與綠線地下連通層轉乘，動線流暢"
+    },
+    "大坪林": {
+        "base_min": 4.0,
+        "tip": "經由地下連通道前往環狀線月台"
+    },
+    "景安": {
+        "base_min": 5.0,
+        "tip": "地下深層直通高架黃線，步行距離較長"
+    },
+    "頭前庄": {
+        "base_min": 3.0,
+        "tip": "橘線地下經電扶梯直達環狀線高架"
+    },
+    "板橋": {
+        "base_min": 8.0,
+        "tip": "站外轉乘：經由地下街/空橋步行約 8 分鐘（需感應出站）"
+    },
+    "新埔民生": {
+        "base_min": 8.0,
+        "tip": "站外步行轉乘：出站後經民生路步行約 8 分鐘"
+    },
+    "南港展覽館": {
+        "base_min": 4.0,
+        "tip": "藍線地下站體直升文湖線高架月台"
+    }
+}
+
+STATION_ALIASES = {
+    "北車": "台北車站",
+    "台北": "台北車站",
+    "台北站": "台北車站",
+    "台北市區": "台北車站",
+    "市府": "市政府",
+    "市府站": "市政府",
+    "101": "台北101/世貿",
+    "世貿": "台北101/世貿",
+    "台北101": "台北101/世貿",
+    "101世貿": "台北101/世貿",
+    "小巨蛋": "台北小巨蛋",
+    "中正": "中正紀念堂",
+    "中正堂": "中正紀念堂",
+    "高鐵板橋": "板橋",
+    "高鐵南港": "南港",
+    "高鐵台北": "台北車站",
+    "南軟": "南港軟體園區",
+    "展覽館": "南港展覽館",
+    "大安森": "大安森林公園",
+    "新店市公所": "新店區公所",
+    "公館站": "公館",
+    "台大": "公館",
+    "台大醫院站": "台大醫院",
+    "廣慈": "廣慈/奉天宮",
+    "奉天宮": "廣慈/奉天宮",
+    "廣慈奉天宮": "廣慈/奉天宮",
+    "廣慈天后宮": "廣慈/奉天宮",
+    "廣慈/奉天宮": "廣慈/奉天宮",
+    "廣慈站": "廣慈/奉天宮",
+    "奉天宮站": "廣慈/奉天宮",
+    "廣慈天后宮站": "廣慈/奉天宮",
+    "廣慈奉天宮站": "廣慈/奉天宮",
+    "廣慈/奉天宮站": "廣慈/奉天宮"
+}
+
+
+# ==========================================
+# 3. 通用全路網圖論 Dijkstra 演算法
+# ==========================================
+
+class MetroGraph:
+    """北捷通用路網圖論模型，支援任意多次轉乘"""
+
+    def __init__(self):
+        self.station_lines: Dict[str, List[str]] = {}
+        self.adj: Dict[Tuple[str, str], List[Tuple[Tuple[str, str], float]]] = {}
+        self._build_graph()
+
+    def _build_graph(self):
+        # 建立站點與路線之映射
+        for line, st_list in LINE_STATIONS.items():
+            for i, st in enumerate(st_list):
+                self.station_lines.setdefault(st, [])
+                if line not in self.station_lines[st]:
+                    self.station_lines[st].append(line)
+
+                # 同路線相鄰站雙向行駛邊
+                if i > 0:
+                    prev_st = st_list[i - 1]
+                    self.adj.setdefault((st, line), []).append(((prev_st, line), 2.0))
+                    self.adj.setdefault((prev_st, line), []).append(((st, line), 2.0))
+
+        # 新埔 (BL) ↔ 新埔民生 (Y) 站外步行轉乘
+        self.adj.setdefault(("新埔", "BL"), []).append((("新埔民生", "Y"), 8.0))
+        self.adj.setdefault(("新埔民生", "Y"), []).append((("新埔", "BL"), 8.0))
+
+    def normalize_station_name(self, raw_name: str) -> Optional[str]:
+        if not raw_name:
+            return None
+        name = raw_name.strip()
+        if name.endswith("站") and len(name) > 2 and name not in ["台北車站", "新北產業園區"]:
+            name = name[:-1]
+        elif name == "台北站":
+            name = "台北車站"
+
+        if name in STATION_ALIASES:
+            return STATION_ALIASES[name]
+
+        if name in self.station_lines:
+            return name
+
+        for st in self.station_lines.keys():
+            if name in st or st in name:
+                return st
+
+        return None
+
+    def find_all_candidate_routes(self, origin: str, dest: str) -> List[List[Dict[str, Any]]]:
+        """
+        利用 Dijkstra 演算法尋找最佳候選乘車路徑（支援 0 次、1 次、2 次、3 次或多次轉乘）
+        """
+        origin = self.normalize_station_name(origin)
+        dest = self.normalize_station_name(dest)
+
+        if not origin or not dest or origin == dest:
+            return []
+
+        # 優先檢查是否同路線直達
+        common_lines = set(self.station_lines.get(origin, [])) & set(self.station_lines.get(dest, []))
+        if common_lines:
+            for c_line in common_lines:
+                seq = LINE_STATIONS[c_line]
+                if origin in seq and dest in seq:
+                    idx1, idx2 = seq.index(origin), seq.index(dest)
+                    path = seq[idx1:idx2 + 1] if idx1 < idx2 else list(reversed(seq[idx2:idx1 + 1]))
+                    return [[{
+                        "line": c_line,
+                        "from_station": origin,
+                        "to_station": dest,
+                        "stations_count": len(path) - 1,
+                        "path": path
+                    }]]
+
+        # Dijkstra 廣義優先佇列搜尋：(cost, transfers, counter, (station, line), legs)
+        pq = []
+        counter = 0
+        for l in self.station_lines.get(origin, []):
+            counter += 1
+            heapq.heappush(pq, (0.0, 0, counter, (origin, l), []))
+
+        visited = {}
+        found_routes = []
+
+        while pq and len(found_routes) < 3:
+            cost, transfers, _, (st, line), legs = heapq.heappop(pq)
+
+            if st == dest:
+                found_routes.append(legs)
+                if len(found_routes) >= 2:
+                    break
+                continue
+
+            state_key = (st, line)
+            if state_key in visited and visited[state_key] <= cost:
+                continue
+            visited[state_key] = cost
+
+            # 1. 沿著同路線搭乘至相鄰車站
+            for (next_st, next_line), edge_cost in self.adj.get((st, line), []):
+                new_legs = [dict(l) for l in legs]
+                if next_line == line:
+                    if not new_legs or new_legs[-1]["line"] != line or new_legs[-1]["to_station"] != st:
+                        new_legs.append({
+                            "line": line,
+                            "from_station": st,
+                            "to_station": next_st,
+                            "stations_count": 1
+                        })
+                    else:
+                        new_legs[-1]["to_station"] = next_st
+                        new_legs[-1]["stations_count"] += 1
+                    counter += 1
+                    heapq.heappush(pq, (cost + edge_cost, transfers, counter, (next_st, line), new_legs))
+                else:
+                    # 站外跨線步行轉乘（如新埔 ↔ 新埔民生）
+                    new_legs.append({
+                        "line": next_line,
+                        "from_station": next_st,
+                        "to_station": next_st,
+                        "stations_count": 0
+                    })
+                    counter += 1
+                    heapq.heappush(pq, (cost + edge_cost + 15.0, transfers + 1, counter, (next_st, next_line), new_legs))
+
+            # 2. 在同車站轉乘至其他路線
+            for other_line in self.station_lines.get(st, []):
+                if other_line != line:
+                    walk_info = INTERCHANGE_WALK_DATA.get(st, {"base_min": 3.0})
+                    walk_cost = walk_info.get("base_min", 3.0)
+                    counter += 1
+                    # 轉乘給予 15 分鐘權重，優先選擇少轉乘之路徑
+                    heapq.heappush(pq, (cost + walk_cost + 15.0, transfers + 1, counter, (st, other_line), [dict(l) for l in legs]))
+
+        return found_routes
+
+
+metro_graph = MetroGraph()
+
+
+# ==========================================
+# 4. 100% 真實時刻表多段路徑求解器
+# ==========================================
+
+class ScheduleOptimizer:
+    """100% 讀取 trtc_timetable.json 真實時刻表多段轉乘求解器"""
+
+    @classmethod
+    def is_peak_hour(cls, dt: datetime.datetime) -> bool:
+        # 國定假日與週末不適用平日尖峰加權
+        is_holiday, _ = is_taiwan_holiday_or_weekend(dt)
+        if is_holiday:
+            return False
+        time_val = dt.time()
+        morning_peak = datetime.time(7, 30) <= time_val <= datetime.time(9, 30)
+        evening_peak = datetime.time(17, 0) <= time_val <= datetime.time(19, 30)
+        return morning_peak or evening_peak
+
+    @classmethod
+    def find_real_train_on_leg(
+        cls,
+        from_st: str,
+        to_st: str,
+        after_t_str: str,
+        day_type: str = "weekday",
+        line_hint: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        100% 查表：從 STATIONS_DB 依序檢索，
+        尋找第一班停靠 to_st 且順向行駛之真實班次，取得出發與抵達表定時間。
+        """
+        target_m = op_min(after_t_str)
+        dep_list = STATIONS_DB.get(from_st, {}).get(day_type, [])
+
+        for dep in dep_list:
+            dep_m = op_min(dep["time"])
+            if dep_m >= target_m:
+                tr = TRAINS_DB.get(dep["train_id"])
+                if not tr:
+                    continue
+
+                if line_hint and tr["line"] != line_hint:
+                    # 允許中和新蘆線互通查詢
+                    if not (line_hint.startswith("O_") and tr["line"].startswith("O_")):
+                        continue
+
+                stops = tr.get("stops", {})
+                if from_st in stops and to_st in stops:
+                    t_from = op_min(stops[from_st])
+                    t_to = op_min(stops[to_st])
+                    if t_to > t_from:
+                        return {
+                            "train_id": dep["train_id"],
+                            "line": tr["line"],
+                            "dst": tr["dst"],
+                            "dep_time": stops[from_st],
+                            "arr_time": stops[to_st],
+                            "ride_min": t_to - t_from
+                        }
+
+        return None
+
+    @classmethod
+    def calculate_transfer_plan(
+        cls,
+        origin: str,
+        destination: str,
+        dep_time_str: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        通用多段轉乘方案精算（支援 0~3 次以上任意多次轉乘）：
+        1. 透過圖論 Dijkstra 動態找出候選路線段落
+        2. 依序查表匹配真實班表
+        3. 跨月台正對面同面轉乘步行緩衝 0 分鐘，其餘依實際基準步行時間推算
+        """
+        now = datetime.datetime.now()
+        if dep_time_str:
+            try:
+                clean_time = dep_time_str.replace("：", ":").strip()
+                if "T" in clean_time:
+                    target_dt = datetime.datetime.fromisoformat(clean_time)
+                elif " " in clean_time and len(clean_time) > 10:
+                    target_dt = datetime.datetime.fromisoformat(clean_time.replace(" ", "T"))
+                else:
+                    parts = clean_time.split(":")
+                    start_h = int(parts[0])
+                    start_m = int(parts[1])
+                    target_dt = now.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
+            except Exception:
+                target_dt = now
+        else:
+            target_dt = now
+
+        is_holiday, holiday_desc = is_taiwan_holiday_or_weekend(target_dt)
+        day_type = "weekend" if is_holiday else "weekday"
+        start_time_str = target_dt.strftime("%H:%M")
+        is_peak = cls.is_peak_hour(target_dt)
+
+        candidate_routes = metro_graph.find_all_candidate_routes(origin, destination)
+        if not candidate_routes:
+            logger.error(f"Dijkstra 查無路徑：{origin} ➔ {destination}")
+            return None
+
+        best_evaluated_plan = None
+
+        for route_legs in candidate_routes:
+            timeline = []
+            curr_after_t = start_time_str
+            valid_route = True
+
+            for i, leg in enumerate(route_legs):
+                from_st = leg["from_station"]
+                to_st = leg["to_station"]
+                line_hint = leg["line"]
+
+                train_info = cls.find_real_train_on_leg(from_st, to_st, curr_after_t, day_type, line_hint)
+                if not train_info:
+                    valid_route = False
+                    break
+
+                leg_record = {
+                    "line": train_info["line"],
+                    "line_name": LINE_NAMES.get(train_info["line"], leg["line"]),
+                    "line_color": LINE_COLORS.get(train_info["line"], "#888888"),
+                    "from_station": from_st,
+                    "to_station": to_st,
+                    "dep_time": train_info["dep_time"],
+                    "arr_time": train_info["arr_time"],
+                    "stations_count": leg.get("stations_count", 1),
+                    "dst": train_info["dst"]
+                }
+
+                # 若後面還有轉乘段落，計算轉乘步行時間與提示
+                if i < len(route_legs) - 1:
+                    xfer_st = to_st
+                    walk_data = INTERCHANGE_WALK_DATA.get(xfer_st, {"base_min": 3.0, "tip": "依指標轉乘"})
+                    base_walk = walk_data.get("base_min", 3.0)
+                    car_tip = walk_data.get("tip", "依指標轉乘")
+
+                    if base_walk == 0.0:
+                        walk_min = 0.0
+                        walk_desc_text = "同月台正對面換車・步行約 0 分鐘"
+                    else:
+                        walk_min = base_walk + (1.0 if is_peak else 0.0)
+                        walk_desc_text = f"步行約 {int(walk_min)} 分鐘"
+
+                    xfer_desc = f"{xfer_st}站轉乘・{walk_desc_text}・{car_tip}"
+
+                    leg_record["transfer_after"] = {
+                        "station": xfer_st,
+                        "walk_min": int(walk_min),
+                        "car_tip": car_tip,
+                        "desc": xfer_desc
+                    }
+
+                    # 更新下一段的出發時刻要求
+                    reach_platform_m = op_min(train_info["arr_time"]) + int(walk_min)
+                    curr_after_t = min_to_str(reach_platform_m)
+
+                timeline.append(leg_record)
+
+            if valid_route and timeline:
+                first_dep = timeline[0]["dep_time"]
+                last_arr = timeline[-1]["arr_time"]
+                total_duration = op_min(last_arr) - op_min(first_dep)
+
+                weekday_names = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+                plan_candidate = {
+                    "origin": origin,
+                    "destination": destination,
+                    "is_direct": (len(timeline) == 1),
+                    "dep_time": first_dep,
+                    "arr_time": last_arr,
+                    "total_duration_min": total_duration,
+                    "is_peak": is_peak,
+                    "day_type": day_type,
+                    "is_holiday": is_holiday,
+                    "holiday_desc": holiday_desc,
+                    "target_date": target_dt.strftime("%Y-%m-%d"),
+                    "weekday_name": weekday_names[target_dt.weekday()],
+                    "timeline": timeline,
+                    "segments": timeline,
+                    "transfer_info": timeline[0].get("transfer_after") if len(timeline) > 1 else None
+                }
+
+                if best_evaluated_plan is None or plan_candidate["total_duration_min"] < best_evaluated_plan["total_duration_min"]:
+                    best_evaluated_plan = plan_candidate
+
+        return best_evaluated_plan
