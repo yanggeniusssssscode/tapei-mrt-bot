@@ -24,3 +24,9 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# 本地 SQLite 資料庫
+*.db
+*.sqlite
+*.sqlite3
+

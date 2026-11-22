@@ -456,6 +456,8 @@ class ScheduleOptimizer:
         """
         target_m = op_min(after_t_str)
         dep_list = STATIONS_DB.get(from_st, {}).get(day_type, [])
+        if not dep_list and day_type == "saturday":
+            dep_list = STATIONS_DB.get(from_st, {}).get("weekend", [])
 
         for dep in dep_list:
             dep_m = op_min(dep["time"])
@@ -466,7 +468,7 @@ class ScheduleOptimizer:
 
                 if line_hint and tr["line"] != line_hint:
                     # 允許中和新蘆線互通查詢
-                    if not (line_hint.startswith("O_") and tr["line"].startswith("O_")):
+                    if not (line_hint.startswith("O") and tr["line"].startswith("O")):
                         continue
 
                 stops = tr.get("stops", {})
@@ -521,7 +523,10 @@ class ScheduleOptimizer:
             target_dt = now
 
         is_holiday, holiday_desc = is_taiwan_holiday_or_weekend(target_dt)
-        day_type = "weekend" if is_holiday else "weekday"
+        if is_holiday:
+            day_type = "saturday" if target_dt.weekday() == 5 else "weekend"
+        else:
+            day_type = "weekday"
         start_time_str = target_dt.strftime("%H:%M")
         is_peak = cls.is_peak_hour(target_dt)
 
@@ -585,7 +590,8 @@ class ScheduleOptimizer:
                         "station": xfer_st,
                         "walk_min": int(walk_min),
                         "car_tip": car_tip,
-                        "desc": xfer_desc
+                        "desc": xfer_desc,
+                        "single_line_desc": xfer_desc
                     }
 
                     # 更新下一段的出發時刻要求
