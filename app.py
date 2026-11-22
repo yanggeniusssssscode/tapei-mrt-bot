@@ -423,8 +423,8 @@ def handle_text_message(event: MessageEvent):
     # 3. Quick Reply 互動選單：選擇出發站 / 選擇目的地
     # --------------------------------------------------
     if user_msg == "選擇出發站":
-        # 當使用者點擊「選擇出發站」時，自動清空 SQLite 中原本記錄的目的地與自訂時間
-        session.update(to=None, time=None)
+        # 當使用者點擊「選擇出發站」時，自動清空 SQLite 中原本記錄的目的地（保留已設定的指定時間）
+        session.update(to=None)
         reply_msg = TextMessage(
             text="📍 請選擇「出發站」所屬之捷運路線：",
             quick_reply=create_line_selection_quick_reply("from")
@@ -473,7 +473,7 @@ def handle_text_message(event: MessageEvent):
             type_name = "出發站" if target_type == "from" else "目的地"
 
             if target_type == "from":
-                session.update(to=None, time=None)
+                session.update(to=None)
 
             carousel_bubble = create_line_station_carousel_flex(line_code, target_type)
             reply_msg = FlexMessage(
@@ -496,8 +496,8 @@ def handle_text_message(event: MessageEvent):
                 norm_st = station_raw
 
             if target_type == "from":
-                # 設定新的出發站，並自動清空 SQLite 資料庫中原記錄之「目的地」與「自訂時間」
-                session.update(**{"from": norm_st, "to": None, "time": None})
+                # 設定新的出發站，並自動清空 SQLite 資料庫中原記錄之「目的地」（保留已設定的指定時間）
+                session.update(**{"from": norm_st, "to": None})
                 reply_msg = TextMessage(
                     text=f"✅ 已設定出發站：【{norm_st}】\n🎯 請點選下方路線選擇「目的地」（向右滑動直選車站）：",
                     quick_reply=create_line_selection_quick_reply("to")
@@ -629,7 +629,7 @@ def handle_text_message(event: MessageEvent):
     single_st = metro_graph.normalize_station_name(user_msg)
     if single_st:
         if not session.get("from"):
-            session.update(**{"from": single_st, "to": None, "time": None})
+            session.update(**{"from": single_st, "to": None})
             reply_msg = TextMessage(
                 text=f"📍 已為您設定出發站：【{single_st}】\n🎯 請接著輸入或選擇「目的地」（例如輸入「士林」或點選下方按鈕）：",
                 quick_reply=create_line_selection_quick_reply("to")
@@ -641,8 +641,8 @@ def handle_text_message(event: MessageEvent):
             execute_and_reply_plan(reply_token, session["from"], session["to"], session.get("time"))
             return
         elif session.get("from") and session.get("to"):
-            # 重新設定出發站：自動清空舊目的地與自訂時間
-            session.update(**{"from": single_st, "to": None, "time": None})
+            # 重新設定出發站：自動清空舊目的地（保留已設定的指定時間）
+            session.update(**{"from": single_st, "to": None})
             reply_msg = TextMessage(
                 text=f"📍 已更新出發站為：【{single_st}】\n🎯 請接著選擇或輸入目的地：",
                 quick_reply=create_line_selection_quick_reply("to")
