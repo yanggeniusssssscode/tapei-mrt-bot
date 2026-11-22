@@ -423,6 +423,8 @@ def handle_text_message(event: MessageEvent):
     # 3. Quick Reply 互動選單：選擇出發站 / 選擇目的地
     # --------------------------------------------------
     if user_msg == "選擇出發站":
+        # 當使用者點擊「選擇出發站」時，自動清空 SQLite 中原本記錄的目的地與自訂時間
+        session.update(to=None, time=None)
         reply_msg = TextMessage(
             text="📍 請選擇「出發站」所屬之捷運路線：",
             quick_reply=create_line_selection_quick_reply("from")
@@ -470,6 +472,9 @@ def handle_text_message(event: MessageEvent):
             line_name = line_cfg.get("name", line_code)
             type_name = "出發站" if target_type == "from" else "目的地"
 
+            if target_type == "from":
+                session.update(to=None, time=None)
+
             carousel_bubble = create_line_station_carousel_flex(line_code, target_type)
             reply_msg = FlexMessage(
                 alt_text=f"📍 請選擇【{line_name}】{type_name}（向右滑動切換車站）",
@@ -491,18 +496,14 @@ def handle_text_message(event: MessageEvent):
                 norm_st = station_raw
 
             if target_type == "from":
-                session["from"] = norm_st
-                # 若目的地已存在，直接計算結果！
-                if session.get("to"):
-                    execute_and_reply_plan(reply_token, session["from"], session["to"], session.get("time"))
-                    return
-                else:
-                    reply_msg = TextMessage(
-                        text=f"✅ 已設定出發站：【{norm_st}】\n請點選下方路線選擇「目的地」（左右滑動直選車站）：",
-                        quick_reply=create_line_selection_quick_reply("to")
-                    )
-                    reply_single_message(reply_token, reply_msg)
-                    return
+                # 設定新的出發站，並自動清空 SQLite 資料庫中原記錄之「目的地」與「自訂時間」
+                session.update(**{"from": norm_st, "to": None, "time": None})
+                reply_msg = TextMessage(
+                    text=f"✅ 已設定出發站：【{norm_st}】\n🎯 請點選下方路線選擇「目的地」（向右滑動直選車站）：",
+                    quick_reply=create_line_selection_quick_reply("to")
+                )
+                reply_single_message(reply_token, reply_msg)
+                return
             else:
                 session["to"] = norm_st
                 # 若出發站已存在，直接計算結果！
@@ -511,7 +512,7 @@ def handle_text_message(event: MessageEvent):
                     return
                 else:
                     reply_msg = TextMessage(
-                        text=f"✅ 已設定目的地：【{norm_st}】\n請點選下方路線選擇「出發站」（左右滑動直選車站）：",
+                        text=f"✅ 已設定目的地：【{norm_st}】\n📍 請點選下方路線選擇「出發站」（向右滑動直選車站）：",
                         quick_reply=create_line_selection_quick_reply("from")
                     )
                     reply_single_message(reply_token, reply_msg)
@@ -628,9 +629,9 @@ def handle_text_message(event: MessageEvent):
     single_st = metro_graph.normalize_station_name(user_msg)
     if single_st:
         if not session.get("from"):
-            session["from"] = single_st
+            session.update(**{"from": single_st, "to": None, "time": None})
             reply_msg = TextMessage(
-                text=f"📍 已為您設定出發站：【{single_st}】\n請接著輸入或選擇「目的地」（例如輸入「士林」或點選下方按鈕）：",
+                text=f"📍 已為您設定出發站：【{single_st}】\n🎯 請接著輸入或選擇「目的地」（例如輸入「士林」或點選下方按鈕）：",
                 quick_reply=create_line_selection_quick_reply("to")
             )
             reply_single_message(reply_token, reply_msg)
@@ -640,11 +641,10 @@ def handle_text_message(event: MessageEvent):
             execute_and_reply_plan(reply_token, session["from"], session["to"], session.get("time"))
             return
         elif session.get("from") and session.get("to"):
-            # 重新設定出發站
-            session["from"] = single_st
-            session["to"] = None
+            # 重新設定出發站：自動清空舊目的地與自訂時間
+            session.update(**{"from": single_st, "to": None, "time": None})
             reply_msg = TextMessage(
-                text=f"📍 已更新出發站為：【{single_st}】\n請接著選擇或輸入目的地：",
+                text=f"📍 已更新出發站為：【{single_st}】\n🎯 請接著選擇或輸入目的地：",
                 quick_reply=create_line_selection_quick_reply("to")
             )
             reply_single_message(reply_token, reply_msg)
