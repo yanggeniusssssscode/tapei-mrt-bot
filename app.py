@@ -205,32 +205,37 @@ user_sessions = SessionStore()
 
 def reply_single_message(reply_token: str, message_obj: Any):
     """透過 LINE Messaging API 發送單一訊息（具備錯誤診斷與純文字降級）"""
+    reply_multiple_messages(reply_token, [message_obj])
+
+
+def reply_multiple_messages(reply_token: str, message_objs: list):
+    """透過 LINE Messaging API 發送多筆訊息（最多 5 筆，具備錯誤診斷與純文字降級）"""
     try:
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=reply_token,
-                    messages=[message_obj]
+                    messages=message_objs[:5]
                 )
             )
     except Exception as e:
         err_detail = getattr(e, "body", str(e))
         logger.error(f"發送 LINE 訊息失敗: {err_detail}", exc_info=True)
         # 若傳送 Flex 訊息遭 LINE 拒絕，發送降級純文字訊息避免使用者空等
-        if isinstance(message_obj, FlexMessage):
-            try:
-                fallback_text = f"{message_obj.alt_text}\n\n（卡片載入稍有延遲，請點選下方選單繼續查詢）"
-                with ApiClient(configuration) as fb_client:
-                    api = MessagingApi(fb_client)
-                    api.reply_message(
-                        ReplyMessageRequest(
-                            reply_token=reply_token,
-                            messages=[TextMessage(text=fallback_text)]
-                        )
+        try:
+            fallbacks = [m.alt_text for m in message_objs if isinstance(m, FlexMessage)]
+            fallback_text = "\n\n".join(fallbacks) if fallbacks else "卡片載入稍有延遲，請點選下方選單繼續查詢"
+            with ApiClient(configuration) as fb_client:
+                api = MessagingApi(fb_client)
+                api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=reply_token,
+                        messages=[TextMessage(text=fallback_text)]
                     )
-            except Exception as fb_err:
-                logger.error(f"發送降級訊息亦失敗: {fb_err}")
+                )
+        except Exception as fb_err:
+            logger.error(f"發送降級訊息亦失敗: {fb_err}")
 
 
 def extract_datetime_and_clean_text(text: str) -> Tuple[Optional[str], str]:
@@ -721,24 +726,34 @@ def handle_postback(event: PostbackEvent):
 
 
 def execute_and_reply_plan(reply_token: str, origin: str, dest: str, time_str: Optional[str] = None):
-    """計算最佳轉乘方案並以 Flex Message 模板回傳"""
+    """計算多種合理轉乘方案（最多 3 種）並為每種方案各傳送一張獨立的 Flex Message 路線卡片"""
     try:
-        plan = ScheduleOptimizer.calculate_transfer_plan(origin, dest, time_str)
-        if not plan:
+        plans = ScheduleOptimizer.calculate_transfer_plans(origin, dest, time_str)
+        if not plans:
             reply_msg = TextMessage(
                 text=f"⚠️ 無法為您規劃從【{origin}】至【{dest}】之捷運路線，請確認車站是否有連通。"
             )
             reply_single_message(reply_token, reply_msg)
             return
 
-        flex_bubble = create_transfer_result_flex(plan)
-        alt_text = f"🚇 {plan['arr_time']} 抵達{dest}（{origin}➔{dest}）"
+        total_plans = len(plans)
+        flex_messages = []
+        for idx, plan in enumerate(plans, 1):
+            flex_bubble = create_transfer_result_flex(plan, plan_index=idx, total_plans=total_plans)
+            if total_plans > 1:
+                badge_desc = "最快抵達" if idx == 1 else "替代路線"
+                alt_text = f"🚇 [方案 {idx}・{badge_desc}] {plan['arr_time']} 抵達{dest}（{origin}➔{dest}，約{plan['total_duration_min']}分）"
+            else:
+                alt_text = f"🚇 {plan['arr_time']} 抵達{dest}（{origin}➔{dest}，約{plan['total_duration_min']}分）"
 
-        reply_msg = FlexMessage(
-            alt_text=alt_text,
-            contents=FlexContainer.from_dict(flex_bubble)
-        )
-        reply_single_message(reply_token, reply_msg)
+            flex_messages.append(
+                FlexMessage(
+                    alt_text=alt_text,
+                    contents=FlexContainer.from_dict(flex_bubble)
+                )
+            )
+
+        reply_multiple_messages(reply_token, flex_messages)
 
     except Exception as e:
         logger.error(f"規劃路線失敗: {e}", exc_info=True)

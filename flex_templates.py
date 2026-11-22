@@ -131,10 +131,14 @@ LINE_CAROUSEL_CONFIG = {
 LINE_SECTIONS_CONFIG = LINE_CAROUSEL_CONFIG
 
 
-def create_transfer_result_flex(plan: Dict[str, Any]) -> Dict[str, Any]:
+def create_transfer_result_flex(
+    plan: Dict[str, Any],
+    plan_index: int = 1,
+    total_plans: int = 1
+) -> Dict[str, Any]:
     """
     建立符合北捷轉乘優化規範之極簡直覺卡片 Flex Message
-    包含：XXL 醒目抵達時間、精簡路線時間軸、雙方案並排、原生滾輪調整時間按鈕
+    包含：XXL 醒目抵達時間、精簡路線時間軸、方案標籤（支援多方案卡片）、原生滾輪調整時間按鈕
     """
     arr_time = plan.get("arr_time", "--:--")
     dest_name = plan.get("destination", "目的地")
@@ -171,6 +175,112 @@ def create_transfer_result_flex(plan: Dict[str, Any]) -> Dict[str, Any]:
         badge_text = f"離峰步速・{wk_name}" if wk_name else "離峰正常步速"
         badge_bg = "#F0FDF4"
         badge_color = "#16A34A"
+
+    # 多方案頂部標題與狀態列建構
+    if total_plans > 1:
+        if plan_index == 1:
+            plan_badge_text = "方案 1・最快抵達"
+            plan_badge_bg = "#EFF6FF"
+            plan_badge_color = "#2563EB"
+        else:
+            plan_badge_text = f"方案 {plan_index}・替代路線"
+            plan_badge_bg = "#F8FAFC"
+            plan_badge_color = "#475569"
+
+        header_box = {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "alignItems": "center",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": plan_badge_bg,
+                            "cornerRadius": "sm",
+                            "paddingStart": "sm",
+                            "paddingEnd": "sm",
+                            "paddingTop": "xs",
+                            "paddingBottom": "xs",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": plan_badge_text,
+                                    "size": "xs",
+                                    "color": plan_badge_color,
+                                    "weight": "bold"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": badge_bg,
+                            "cornerRadius": "sm",
+                            "paddingStart": "xs",
+                            "paddingEnd": "xs",
+                            "paddingTop": "none",
+                            "paddingBottom": "none",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": badge_text,
+                                    "size": "xxs",
+                                    "color": badge_color,
+                                    "weight": "bold"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "text",
+                    "text": f"{origin_name} ➔ {dest_name}",
+                    "size": "xs",
+                    "color": "#64748B",
+                    "weight": "bold",
+                    "margin": "xs"
+                }
+            ]
+        }
+    else:
+        header_box = {
+            "type": "box",
+            "layout": "horizontal",
+            "alignItems": "center",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"{origin_name} ➔ {dest_name}",
+                    "size": "xs",
+                    "color": "#64748B",
+                    "weight": "bold",
+                    "flex": 1
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": badge_bg,
+                    "cornerRadius": "sm",
+                    "paddingStart": "xs",
+                    "paddingEnd": "xs",
+                    "paddingTop": "none",
+                    "paddingBottom": "none",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": badge_text,
+                            "size": "xxs",
+                            "color": badge_color,
+                            "weight": "bold"
+                        }
+                    ]
+                }
+            ]
+        }
 
     # 路線時間軸元件組裝（動態支援任意多段車程與轉乘提示）
     timeline_boxes = []
@@ -285,41 +395,8 @@ def create_transfer_result_flex(plan: Dict[str, Any]) -> Dict[str, Any]:
             "layout": "vertical",
             "paddingAll": "lg",
             "contents": [
-                # 頂部狀態列
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "alignItems": "center",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": f"{origin_name} ➔ {dest_name}",
-                            "size": "xs",
-                            "color": "#64748B",
-                            "weight": "bold",
-                            "flex": 1
-                        },
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "backgroundColor": badge_bg,
-                            "cornerRadius": "sm",
-                            "paddingStart": "xs",
-                            "paddingEnd": "xs",
-                            "paddingTop": "none",
-                            "paddingBottom": "none",
-                            "contents": [
-                                {
-                                    "type": "text",
-                                    "text": badge_text,
-                                    "size": "xxs",
-                                    "color": badge_color,
-                                    "weight": "bold"
-                                }
-                            ]
-                        }
-                    ]
-                },
+                # 頂部狀態列（多方案標籤或單方案起訖站）
+                header_box,
                 # 預計抵達時間 (主視覺最大字體 XXL)
                 {
                     "type": "text",
@@ -332,7 +409,7 @@ def create_transfer_result_flex(plan: Dict[str, Any]) -> Dict[str, Any]:
                 # 總車程時間
                 {
                     "type": "text",
-                    "text": f"總耗時約 {total_min} 分鐘",
+                    "text": f"總耗時約 {total_min} 分鐘・{'直達無須轉乘' if is_direct else f'轉乘 {len(segments) - 1} 次'}",
                     "size": "xs",
                     "color": "#64748B",
                     "margin": "xs"

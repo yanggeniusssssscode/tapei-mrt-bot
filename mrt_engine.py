@@ -333,7 +333,7 @@ class MetroGraph:
 
     def find_all_candidate_routes(self, origin: str, dest: str) -> List[List[Dict[str, Any]]]:
         """
-        利用 Dijkstra 演算法尋找最佳候選乘車路徑（支援 0 次、1 次、2 次、3 次或多次轉乘）
+        尋找所有合理候選乘車路徑（支援直達、1 次轉乘、2 次轉乘，極端情況支援 3 次轉乘）
         """
         origin = self.normalize_station_name(origin)
         dest = self.normalize_station_name(dest)
@@ -341,83 +341,154 @@ class MetroGraph:
         if not origin or not dest or origin == dest:
             return []
 
-        # 優先檢查是否同路線直達
-        common_lines = set(self.station_lines.get(origin, [])) & set(self.station_lines.get(dest, []))
-        if common_lines:
-            for c_line in common_lines:
-                seq = LINE_STATIONS[c_line]
-                if origin in seq and dest in seq:
-                    idx1, idx2 = seq.index(origin), seq.index(dest)
-                    path = seq[idx1:idx2 + 1] if idx1 < idx2 else list(reversed(seq[idx2:idx1 + 1]))
-                    return [[{
-                        "line": c_line,
-                        "from_station": origin,
-                        "to_station": dest,
-                        "stations_count": len(path) - 1,
-                        "path": path
-                    }]]
+        lines_orig = set(self.station_lines.get(origin, []))
+        lines_dest = set(self.station_lines.get(dest, []))
+        line_set = {l: set(sts) for l, sts in LINE_STATIONS.items()}
 
-        # Dijkstra 廣義優先佇列搜尋：(cost, transfers, counter, (station, line), legs)
-        pq = []
-        counter = 0
-        for l in self.station_lines.get(origin, []):
-            counter += 1
-            heapq.heappush(pq, (0.0, 0, counter, (origin, l), []))
+        out_of_station = {
+            ("新埔", "BL"): [("新埔民生", "Y")],
+            ("新埔民生", "Y"): [("新埔", "BL")]
+        }
 
-        visited = {}
-        found_routes = []
+        routes = []
 
-        while pq and len(found_routes) < 3:
-            cost, transfers, _, (st, line), legs = heapq.heappop(pq)
+        # 1. 0 次轉乘（同路線直達）
+        for l in (lines_orig & lines_dest):
+            seq = LINE_STATIONS[l]
+            if origin in seq and dest in seq:
+                routes.append([{
+                    "line": l,
+                    "from_station": origin,
+                    "to_station": dest,
+                    "stations_count": abs(seq.index(dest) - seq.index(origin))
+                }])
 
-            if st == dest:
-                found_routes.append(legs)
-                if len(found_routes) >= 2:
-                    break
-                continue
+        # 若有直達路線，直達即為唯一最優解，不需繞路轉乘
+        if routes:
+            return routes
 
-            state_key = (st, line)
-            if state_key in visited and visited[state_key] <= cost:
-                continue
-            visited[state_key] = cost
+        # 2. 1 次轉乘：origin (l1) ➔ X (l2) ➔ dest
+        for l1 in lines_orig:
+            seq1 = LINE_STATIONS[l1]
+            for l2 in lines_dest:
+                if l1 == l2:
+                    continue
+                common_x = line_set[l1] & line_set[l2]
+                if l1.startswith("O_") and l2.startswith("O_"):
+                    common_x = {"大橋頭"}
+                for x in common_x:
+                    if x == origin or x == dest:
+                        continue
+                    seq2 = LINE_STATIONS[l2]
+                    routes.append([
+                        {"line": l1, "from_station": origin, "to_station": x, "stations_count": abs(seq1.index(x) - seq1.index(origin))},
+                        {"line": l2, "from_station": x, "to_station": dest, "stations_count": abs(seq2.index(dest) - seq2.index(x))}
+                    ])
+                for st1, l1_match in [(origin, l1)] + [(s, l1) for s in seq1]:
+                    if (st1, l1) in out_of_station:
+                        for st2, l2_match in out_of_station[(st1, l1)]:
+                            if l2_match == l2 and st1 != dest and st2 != origin:
+                                seq2 = LINE_STATIONS[l2]
+                                routes.append([
+                                    {"line": l1, "from_station": origin, "to_station": st1, "stations_count": abs(seq1.index(st1) - seq1.index(origin))},
+                                    {"line": l2, "from_station": st2, "to_station": dest, "stations_count": abs(seq2.index(dest) - seq2.index(st2))}
+                                ])
 
-            # 1. 沿著同路線搭乘至相鄰車站
-            for (next_st, next_line), edge_cost in self.adj.get((st, line), []):
-                new_legs = [dict(l) for l in legs]
-                if next_line == line:
-                    if not new_legs or new_legs[-1]["line"] != line or new_legs[-1]["to_station"] != st:
-                        new_legs.append({
-                            "line": line,
-                            "from_station": st,
-                            "to_station": next_st,
-                            "stations_count": 1
-                        })
-                    else:
-                        new_legs[-1]["to_station"] = next_st
-                        new_legs[-1]["stations_count"] += 1
-                    counter += 1
-                    heapq.heappush(pq, (cost + edge_cost, transfers, counter, (next_st, line), new_legs))
-                else:
-                    # 站外跨線步行轉乘（如新埔 ↔ 新埔民生）
-                    new_legs.append({
-                        "line": next_line,
-                        "from_station": next_st,
-                        "to_station": next_st,
-                        "stations_count": 0
-                    })
-                    counter += 1
-                    heapq.heappush(pq, (cost + edge_cost + 15.0, transfers + 1, counter, (next_st, next_line), new_legs))
+        # 3. 2 次轉乘：origin (l1) ➔ X (l2) ➔ Y (l3) ➔ dest
+        all_lines = list(LINE_STATIONS.keys())
+        for l1 in lines_orig:
+            seq1 = LINE_STATIONS[l1]
+            for l3 in lines_dest:
+                if l1 == l3:
+                    continue
+                for l2 in all_lines:
+                    if l2 == l1 or l2 == l3:
+                        continue
+                    if (l1.startswith("O_") and l2.startswith("O_")) or (l2.startswith("O_") and l3.startswith("O_")):
+                        continue
+                    common_x = line_set[l1] & line_set[l2]
+                    common_y = line_set[l2] & line_set[l3]
+                    seq2 = LINE_STATIONS[l2]
+                    seq3 = LINE_STATIONS[l3]
+                    for x in common_x:
+                        if x == origin or x == dest:
+                            continue
+                        for y in common_y:
+                            if y == origin or y == dest or y == x:
+                                continue
+                            routes.append([
+                                {"line": l1, "from_station": origin, "to_station": x, "stations_count": abs(seq1.index(x) - seq1.index(origin))},
+                                {"line": l2, "from_station": x, "to_station": y, "stations_count": abs(seq2.index(y) - seq2.index(x))},
+                                {"line": l3, "from_station": y, "to_station": dest, "stations_count": abs(seq3.index(dest) - seq3.index(y))}
+                            ])
 
-            # 2. 在同車站轉乘至其他路線
-            for other_line in self.station_lines.get(st, []):
-                if other_line != line:
-                    walk_info = INTERCHANGE_WALK_DATA.get(st, {"base_min": 3.0})
-                    walk_cost = walk_info.get("base_min", 3.0)
-                    counter += 1
-                    # 轉乘給予 15 分鐘權重，優先選擇少轉乘之路徑
-                    heapq.heappush(pq, (cost + walk_cost + 15.0, transfers + 1, counter, (st, other_line), [dict(l) for l in legs]))
+                    # 站外轉乘新埔 ↔ 新埔民生支援
+                    for (st1, l1_cand), out_list in out_of_station.items():
+                        if l1_cand == l1 and st1 in seq1 and st1 != dest:
+                            for st2, l2_cand in out_list:
+                                if l2_cand == l2:
+                                    for y in common_y:
+                                        if y == origin or y == dest or y == st2:
+                                            continue
+                                        routes.append([
+                                            {"line": l1, "from_station": origin, "to_station": st1, "stations_count": abs(seq1.index(st1) - seq1.index(origin))},
+                                            {"line": l2, "from_station": st2, "to_station": y, "stations_count": abs(seq2.index(y) - seq2.index(st2))},
+                                            {"line": l3, "from_station": y, "to_station": dest, "stations_count": abs(seq3.index(dest) - seq3.index(y))}
+                                        ])
+                    for x in common_x:
+                        if x == origin or x == dest:
+                            continue
+                        for (st1, l2_cand), out_list in out_of_station.items():
+                            if l2_cand == l2 and st1 in seq2 and st1 != origin and st1 != x:
+                                for st2, l3_cand in out_list:
+                                    if l3_cand == l3 and st2 != origin and st2 != dest:
+                                        routes.append([
+                                            {"line": l1, "from_station": origin, "to_station": x, "stations_count": abs(seq1.index(x) - seq1.index(origin))},
+                                            {"line": l2, "from_station": x, "to_station": st1, "stations_count": abs(seq2.index(st1) - seq2.index(x))},
+                                            {"line": l3, "from_station": st2, "to_station": dest, "stations_count": abs(seq3.index(dest) - seq3.index(st2))}
+                                        ])
 
-        return found_routes
+        # 4. 極端特殊情況 3 次轉乘支援（例如 環狀線 ➔ 新北投支線）
+        if not routes:
+            for l1 in lines_orig:
+                seq1 = LINE_STATIONS[l1]
+                for l4 in lines_dest:
+                    seq4 = LINE_STATIONS[l4]
+                    for l2 in all_lines:
+                        if l2 == l1 or l2 == l4: continue
+                        if l1.startswith("O_") and l2.startswith("O_"): continue
+                        common_x = line_set[l1] & line_set[l2]
+                        for l3 in all_lines:
+                            if l3 == l2 or l3 == l1 or l3 == l4: continue
+                            if l2.startswith("O_") and l3.startswith("O_"): continue
+                            if l3.startswith("O_") and l4.startswith("O_"): continue
+                            common_y = line_set[l2] & line_set[l3]
+                            common_z = line_set[l3] & line_set[l4]
+                            seq2 = LINE_STATIONS[l2]
+                            seq3 = LINE_STATIONS[l3]
+                            for x in common_x:
+                                if x == origin or x == dest: continue
+                                for y in common_y:
+                                    if y == origin or y == dest or y == x: continue
+                                    for z in common_z:
+                                        if z == origin or z == dest or z == y or z == x: continue
+                                        routes.append([
+                                            {"line": l1, "from_station": origin, "to_station": x, "stations_count": abs(seq1.index(x) - seq1.index(origin))},
+                                            {"line": l2, "from_station": x, "to_station": y, "stations_count": abs(seq2.index(y) - seq2.index(x))},
+                                            {"line": l3, "from_station": y, "to_station": z, "stations_count": abs(seq3.index(z) - seq3.index(y))},
+                                            {"line": l4, "from_station": z, "to_station": dest, "stations_count": abs(seq4.index(dest) - seq4.index(z))}
+                                        ])
+
+        # 去除結構重複路徑
+        unique_routes = []
+        seen = set()
+        for r in routes:
+            key = tuple((leg["line"], leg["from_station"], leg["to_station"]) for leg in r)
+            if key not in seen:
+                seen.add(key)
+                unique_routes.append(r)
+
+        return unique_routes
 
 
 metro_graph = MetroGraph()
@@ -488,17 +559,19 @@ class ScheduleOptimizer:
         return None
 
     @classmethod
-    def calculate_transfer_plan(
+    def calculate_transfer_plans(
         cls,
         origin: str,
         destination: str,
         dep_time_str: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    ) -> List[Dict[str, Any]]:
         """
-        通用多段轉乘方案精算（支援 0~3 次以上任意多次轉乘）：
-        1. 透過圖論 Dijkstra 動態找出候選路線段落
-        2. 依序查表匹配真實班表
-        3. 跨月台正對面同面轉乘步行緩衝 0 分鐘，其餘依實際基準步行時間推算
+        通用多段轉乘方案精算（最多回傳 3 種合理方案）：
+        1. 搜尋起訖站所有可行路徑（支援同起訖不同轉乘組合）
+        2. 代入 TDX 真實時刻表計算各路徑發車與抵達時間
+        3. 依最早抵達時間（次要條件為最少轉乘次數、最短總耗時）排序
+        4. 只保留合理方案（轉乘次數 <= 2 次，且總耗時不超過最快方案 12 分鐘以上）
+        5. 最多回傳前 3 名方案
         """
         now = get_now_taipei()
         if dep_time_str:
@@ -532,10 +605,10 @@ class ScheduleOptimizer:
 
         candidate_routes = metro_graph.find_all_candidate_routes(origin, destination)
         if not candidate_routes:
-            logger.error(f"Dijkstra 查無路徑：{origin} ➔ {destination}")
-            return None
+            logger.error(f"路網查無路徑：{origin} ➔ {destination}")
+            return []
 
-        best_evaluated_plan = None
+        evaluated_plans = []
 
         for route_legs in candidate_routes:
             timeline = []
@@ -613,6 +686,7 @@ class ScheduleOptimizer:
                     "dep_time": first_dep,
                     "arr_time": last_arr,
                     "total_duration_min": total_duration,
+                    "transfers": len(timeline) - 1,
                     "is_peak": is_peak,
                     "day_type": day_type,
                     "is_holiday": is_holiday,
@@ -623,8 +697,48 @@ class ScheduleOptimizer:
                     "segments": timeline,
                     "transfer_info": timeline[0].get("transfer_after") if len(timeline) > 1 else None
                 }
+                evaluated_plans.append(plan_candidate)
 
-                if best_evaluated_plan is None or plan_candidate["total_duration_min"] < best_evaluated_plan["total_duration_min"]:
-                    best_evaluated_plan = plan_candidate
+        if not evaluated_plans:
+            return []
 
-        return best_evaluated_plan
+        # 排序：最早抵達時間 ➔ 最少轉乘次數 ➔ 最短總耗時
+        evaluated_plans.sort(key=lambda p: (op_min(p["arr_time"]), p["transfers"], p["total_duration_min"]))
+
+        # 若有直達路線（0次轉乘），直達即為唯一最合理方案，無需混入繞遠轉乘
+        if any(p["is_direct"] for p in evaluated_plans):
+            direct_plans = [p for p in evaluated_plans if p["is_direct"]]
+            return direct_plans[:1]
+
+        # 智慧過濾：只保留合理方案（轉乘次數 <= 2 次，且總耗時不超過最快方案 12 分鐘以上）
+        fastest_duration = min(p["total_duration_min"] for p in evaluated_plans)
+        min_transfers = min(p["transfers"] for p in evaluated_plans)
+        max_allowed_transfers = max(2, min_transfers)
+
+        filtered_plans = []
+        for p in evaluated_plans:
+            if p["transfers"] <= max_allowed_transfers and p["total_duration_min"] <= fastest_duration + 12:
+                filtered_plans.append(p)
+
+        # 方案去重：起訖時間相同且轉乘站點序列相同的重疊方案僅保留一個
+        unique_plans = []
+        seen = set()
+        for p in filtered_plans:
+            xfer_seq = tuple(leg["to_station"] for leg in p["timeline"][:-1])
+            key = (p["dep_time"], p["arr_time"], xfer_seq)
+            if key not in seen:
+                seen.add(key)
+                unique_plans.append(p)
+
+        return unique_plans[:3]
+
+    @classmethod
+    def calculate_transfer_plan(
+        cls,
+        origin: str,
+        destination: str,
+        dep_time_str: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """回傳第一最佳轉乘方案（維持向後相容性）"""
+        plans = cls.calculate_transfer_plans(origin, destination, dep_time_str)
+        return plans[0] if plans else None
